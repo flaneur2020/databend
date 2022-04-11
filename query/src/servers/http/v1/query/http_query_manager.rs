@@ -69,7 +69,10 @@ impl HttpQueryManager {
     ) -> Result<Arc<HttpQuery>> {
         let query =
             HttpQuery::try_create(id, request, session_manager, user_info, self.config).await?;
-        self.add_query(id, query.clone()).await;
+        self.insert_query(id, query.clone()).await;
+        if query.is_async() {
+            self.spawn_query_expire_task(id.to_string(), query.clone());
+        }
         Ok(query)
     }
 
@@ -78,25 +81,23 @@ impl HttpQueryManager {
         queries.get(query_id).map(|q| q.to_owned())
     }
 
-    async fn add_query(self: &Arc<Self>, query_id: &str, query: Arc<HttpQuery>) {
-        let mut queries = self.queries.write().await;
+    async fn insert_query(self: &Arc<Self>, query_id: &str, query: Arc<HttpQuery>) {
+        let mut queries = self.queries.write();
         queries.insert(query_id.to_string(), query.clone());
+    }
 
+    async fn spawn_query_expire_task(self: &Arc<Self>, query_id: String, query: Arc<HttpQuery>) {
         let self_clone = self.clone();
-        let query_id_clone = query_id.to_string();
-        let query_clone = query.clone();
-        if query.is_async() {
-            tokio::spawn(async move {
-                while let Some(t) = query_clone.check_expire().await {
-                    sleep(t).await;
-                }
-                if self_clone.remove_query(&query_id_clone).await.is_none() {
-                    tracing::warn!("http query {} timeout", &query_id_clone);
-                } else {
-                    query.kill().await;
-                }
-            });
-        };
+        tokio::spawn(async move {
+            while let Some(t) = query_clone.check_expire().await {
+                sleep(t).await;
+            }
+            if self_clone.remove_query(&query_id).await.is_none() {
+                tracing::warn!("http query {} timeout", &query_id_clone);
+            } else {
+                query.kill().await;
+            }
+        });
     }
 
     // not remove it until timeout or cancelled by user, even if query execution is aborted
