@@ -199,10 +199,14 @@ where TablesTable<T>: HistoryAware
                         }
                     });
                     for db in db_name {
-                        if let Ok(database) = ctl.get_database(tenant.as_str(), db.as_str()).await {
-                            dbs.push(database);
+                        match ctl.get_database(tenant.as_str(), db.as_str()).await {
+                            Ok(database) => {
+                                dbs.push(database);
+                            }
+                            Err(err) => {
+                                ctx.push_warning(format!("get database {} failed: {}", db, err))
+                            }
                         }
-                        ctx.push_warning(format!("get database failed: {}", db))
                     }
                 }
             }
